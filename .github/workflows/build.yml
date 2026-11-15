@@ -70,8 +70,8 @@ jobs:
           msbuild $proj.FullName /m /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /v:minimal
           if ($LASTEXITCODE -ne 0) { throw "plugin-sdk build failed" }
 
-          $lib = Get-ChildItem -Path $sdk -Recurse -Filter "plugin_sa.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $lib) { throw "plugin_sa.lib was not produced" }
+          $lib = Get-ChildItem -Path $sdk -Recurse -Filter "Plugin.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $lib) { throw "Plugin.lib was not produced" }
           Write-Host "Library: $($lib.FullName)"
           "PLUGIN_LIB=$($lib.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
