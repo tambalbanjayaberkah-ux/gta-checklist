@@ -1,0 +1,64 @@
+name: Build ASI
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Get your code
+        uses: actions/checkout@v4
+
+      - name: Set up 32-bit Visual Studio compiler
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+
+      - name: Download plugin-sdk
+        shell: pwsh
+        run: |
+          $sdk = Join-Path $env:RUNNER_TEMP "plugin-sdk"
+          git clone --depth 1 https://github.com/DK22Pac/plugin-sdk.git $sdk
+          "PLUGIN_SDK_DIR=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # plugin-sdk project files may reference the game folder; point it at a dummy folder
+          $game = Join-Path $env:RUNNER_TEMP "gta_sa_dummy"
+          New-Item -ItemType Directory -Force -Path (Join-Path $game "scripts") | Out-Null
+          "GTA_SA_DIR=$game" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build plugin-sdk library for GTA SA
+        shell: pwsh
+        run: |
+          $sdk = $env:PLUGIN_SDK_DIR
+          $proj = Get-ChildItem -Path $sdk -Recurse -Filter "plugin_sa.vcxproj" | Select-Object -First 1
+          if (-not $proj) { throw "plugin_sa.vcxproj not found in plugin-sdk" }
+          Write-Host "Building $($proj.FullName)"
+          msbuild $proj.FullName /m /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /v:minimal
+          if ($LASTEXITCODE -ne 0) { throw "plugin-sdk build failed" }
+          $lib = Get-ChildItem -Path $sdk -Recurse -Filter "plugin_sa.lib" | Select-Object -First 1
+          if (-not $lib) { throw "plugin_sa.lib was not produced" }
+          Write-Host "Library: $($lib.FullName)"
+          "PLUGIN_LIB=$($lib.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Compile the mod
+        shell: pwsh
+        run: |
+          $sdk = $env:PLUGIN_SDK_DIR
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          $sources = Get-ChildItem -Path . -Recurse -Filter *.cpp | Where-Object { $_.FullName -notmatch '\\build\\' } | ForEach-Object { $_.FullName }
+          if (-not $sources) { throw "No .cpp files found in the repo" }
+          Push-Location build
+          cl /nologo /LD /MT /O2 /EHsc /std:c++17 /D_CRT_SECURE_NO_WARNINGS /DNDEBUG `
+             /DGTASA /DPLUGIN_SGV_10US /D_USE_MATH_DEFINES /D_CRT_NON_CONFORMING_SWPRINTFS `
+             /I"$sdk\plugin_sa" /I"$sdk\plugin_sa\game_sa" /I"$sdk\shared" /I"$sdk\shared\game" `
+             $sources /Fe"GTA100Checklist.dll" /link /MACHINE:X86 "$env:PLUGIN_LIB"
+          if ($LASTEXITCODE -ne 0) { throw "Compile failed - see errors above" }
+          Copy-Item GTA100Checklist.dll GTA100Checklist.asi
+          Pop-Location
+
+      - name: Upload the .asi
+        uses: actions/upload-artifact@v4
+        with:
+          name: GTA100Checklist-asi
+          path: build/GTA100Checklist.asi
