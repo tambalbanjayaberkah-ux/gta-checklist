@@ -124,11 +124,11 @@ void BuildFull100Checklist(std::vector<ChecklistRow>& rows) {
     // 4. EMERGENCY & VEHICLE SUB-MISSIONS
     // =========================================================================
     AddHeader("-- VEHICLE SUB-MISSIONS --");
-    AddProgress("Paramedic (Level 12)",        GetIntStat(STAT_HIGHEST_LEVEL_PARAMEDIC_MISSION), 12);
-    AddProgress("Firefighter (Level 12)",      GetIntStat(STAT_HIGHEST_LEVEL_FIREFIGHTER_MISSION), 12);
-    AddProgress("Vigilante (Level 12)",        GetIntStat(STAT_HIGHEST_LEVEL_VIGILANTE_MISSION), 12);
-    AddProgress("Taxi Driver (50 Fares)",      GetIntStat(STAT_PASSENGERS_DROPPED_OFF_IN_TAXI), 50);
-    AddProgress("Pimping (Level 10)",          GetIntStat(STAT_HIGHEST_LEVEL_PIMPING_MISSION), 10);
+    rows.push_back({ "Paramedic (Level 12)", "[stat id missing]" }); // TODO: STAT_HIGHEST_LEVEL_PARAMEDIC_MISSION does not exist in plugin-sdk
+    rows.push_back({ "Firefighter (Level 12)", "[stat id missing]" }); // TODO: STAT_HIGHEST_LEVEL_FIREFIGHTER_MISSION does not exist in plugin-sdk
+    rows.push_back({ "Vigilante (Level 12)", "[stat id missing]" }); // TODO: STAT_HIGHEST_LEVEL_VIGILANTE_MISSION does not exist in plugin-sdk
+    rows.push_back({ "Taxi Driver (50 Fares)", "[stat id missing]" }); // TODO: STAT_PASSENGERS_DROPPED_OFF_IN_TAXI does not exist in plugin-sdk
+    rows.push_back({ "Pimping (Level 10)", "[stat id missing]" }); // TODO: STAT_HIGHEST_LEVEL_PIMPING_MISSION does not exist in plugin-sdk
 
     // =========================================================================
     // 5. GYM MOVES & CHALLENGES
@@ -141,7 +141,7 @@ void BuildFull100Checklist(std::vector<ChecklistRow>& rows) {
     AddBool("NRG-500 Challenge (Easter Basin)",GetSCM(2473) >= 1);
     AddProgress("Mount Chiliad Challenge",     GetSCM(2482), 3);
     AddBool("Ammu-Nation Shooting Range",      GetSCM(2531) >= 1);
-    AddProgress("Import/Export Lists (3x10)",  GetIntStat(STAT_CARS_EXPORTED), 30);
+    rows.push_back({ "Import/Export Lists (3x10)", "[stat id missing]" }); // TODO: STAT_CARS_EXPORTED does not exist in plugin-sdk
 
     // =========================================================================
     // 6. STADIUM EVENTS & STREET RACES (24 RACES + 4 STADIUMS)
@@ -164,7 +164,7 @@ void BuildFull100Checklist(std::vector<ChecklistRow>& rows) {
     // 7. SAFEHOUSES & COLLECTIBLES (29 Purchases + 250 Collectibles)
     // =========================================================================
     AddHeader("-- SAFEHOUSES & COLLECTIBLES --");
-    AddProgress("Safehouses & Suites Bought",  GetIntStat(STAT_SAFEHOUSES_VISITED), 29);
+    rows.push_back({ "Safehouses & Suites Bought", "[stat id missing]" }); // TODO: STAT_SAFEHOUSES_VISITED does not exist in plugin-sdk
     AddProgress("Gang Tags Sprayed (LS)",      GetIntStat(STAT_TAGS_SPRAYED), 100);
     AddProgress("Snapshots Taken (SF)",        GetIntStat(STAT_SNAPSHOTS_TAKEN), 50);
     AddProgress("Horseshoes Collected (LV)",   GetIntStat(STAT_HORSESHOES_COLLECTED), 50);
