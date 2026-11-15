@@ -26,17 +26,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $game "scripts") | Out-Null
           "GTA_SA_DIR=$game" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Look inside plugin-sdk (for debugging)
-        shell: pwsh
-        run: |
-          $sdk = $env:PLUGIN_SDK_DIR
-          Write-Host "=== Top-level of plugin-sdk ==="
-          Get-ChildItem $sdk | ForEach-Object { Write-Host $_.Name }
-          Write-Host "=== Build-related files ==="
-          Get-ChildItem $sdk -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '\.(sln|vcxproj)$' -or $_.Name -match '^premake5.*\.lua$' -or $_.Name -match '^premake5\.exe$' -or $_.Name -eq 'CMakeLists.txt' -or $_.Extension -in '.bat','.cmd' } |
-            ForEach-Object { Write-Host $_.FullName.Substring($sdk.Length) }
-
       - name: Build plugin-sdk library for GTA SA
         shell: pwsh
         run: |
@@ -45,18 +34,10 @@ jobs:
           $proj = Find-Proj
 
           if (-not $proj) {
-            Write-Host "No plugin_sa.vcxproj yet - trying to generate it with premake5"
+            Write-Host "No plugin_sa.vcxproj yet - generating it with premake5"
             $lua = Get-ChildItem -Path $sdk -Recurse -Filter "premake5.lua" -ErrorAction SilentlyContinue | Select-Object -First 1
             $pm  = Get-ChildItem -Path $sdk -Recurse -Filter "premake5.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($lua) {
-              if (-not $pm) {
-                Write-Host "premake5.exe not in repo, downloading it"
-                $zip = Join-Path $env:RUNNER_TEMP "premake.zip"
-                $dir = Join-Path $env:RUNNER_TEMP "premake"
-                Invoke-WebRequest -Uri "https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-windows.zip" -OutFile $zip
-                Expand-Archive -Path $zip -DestinationPath $dir -Force
-                $pm = Get-ChildItem -Path $dir -Recurse -Filter "premake5.exe" | Select-Object -First 1
-              }
+            if ($lua -and $pm) {
               Push-Location $lua.DirectoryName
               & $pm.FullName vs2022
               Pop-Location
@@ -64,9 +45,10 @@ jobs:
             }
           }
 
-          if (-not $proj) { throw "plugin_sa.vcxproj not found in plugin-sdk (send me the 'Look inside plugin-sdk' step output)" }
+          if (-not $proj) { throw "plugin_sa.vcxproj not found in plugin-sdk" }
 
           Write-Host "Building $($proj.FullName)"
+          "PLUGIN_PROJ=$($proj.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           msbuild $proj.FullName /m /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /v:minimal
           if ($LASTEXITCODE -ne 0) { throw "plugin-sdk build failed" }
 
@@ -82,24 +64,73 @@ jobs:
           New-Item -ItemType Directory -Force -Path build | Out-Null
           $sources = Get-ChildItem -Path . -Recurse -Filter *.cpp | Where-Object { $_.FullName -notmatch '\\build\\' } | ForEach-Object { $_.FullName }
           if (-not $sources) { throw "No .cpp files found in the repo" }
-          # Collect every SA header folder (plus any folder holding eWeaponType.h) into a response file
-          $dirs = @("$sdk\plugin_sa", "$sdk\shared", "$sdk\shared\game")
-          $dirs += Get-ChildItem -Path "$sdk\plugin_sa" -Recurse -Directory | ForEach-Object { $_.FullName }
+
+          # Copy the compiler settings from plugin-sdk's own project (the one that built Plugin.lib)
+          $projFile = $env:PLUGIN_PROJ
+          $projDir = Split-Path $projFile -Parent
+          [xml]$x = Get-Content -Raw $projFile
+          $grp = @($x.Project.ItemDefinitionGroup) | Where-Object { $_.Condition -match 'Release' -and $_.Condition -match 'Win32' } | Select-Object -First 1
+          if (-not $grp) { $grp = @($x.Project.ItemDefinitionGroup) | Where-Object { $_.Condition -match 'Release' } | Select-Object -First 1 }
+
+          $defs = @(); $incs = @(); $extraOpts = @(); $std = "/std:c++latest"
+          if ($grp -and $grp.ClCompile) {
+            $cc = $grp.ClCompile
+            foreach ($d in ("$($cc.PreprocessorDefinitions)" -split ';')) {
+              if ($d -and $d -notlike '%(*') { $defs += $d }
+            }
+            foreach ($d in ("$($cc.AdditionalIncludeDirectories)" -split ';')) {
+              if (-not $d -or $d -like '%(*') { continue }
+              $p = $d.Replace('$(PLUGIN_SDK_DIR)', $sdk).Replace('$(ProjectDir)', "$projDir\").Replace('$(SolutionDir)', "$projDir\")
+              if ($p -notmatch '^[A-Za-z]:') { $p = Join-Path $projDir $p }
+              $incs += $p.TrimEnd('\')
+            }
+            switch ("$($cc.LanguageStandard)") {
+              'stdcpp14'     { $std = '/std:c++14' }
+              'stdcpp17'     { $std = '/std:c++17' }
+              'stdcpp20'     { $std = '/std:c++20' }
+              'stdcpplatest' { $std = '/std:c++latest' }
+            }
+            foreach ($o in ("$($cc.AdditionalOptions)" -split ' ')) {
+              if ($o -and $o -notlike '%(*') { $extraOpts += $o }
+            }
+          } else {
+            Write-Host "WARNING: could not read settings from $projFile"
+          }
+
+          # Safety net: always include the usual SA folders and wherever eWeaponType.h lives
+          $incs += @("$sdk\plugin_sa", "$sdk\plugin_sa\game_sa", "$sdk\shared", "$sdk\shared\game")
           $hits = Get-ChildItem -Path $sdk -Recurse -Filter "eWeaponType.h" -File -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -notmatch 'plugin_vc|plugin_iii|plugin_iv' } |
             ForEach-Object { $_.DirectoryName }
-          Write-Host "eWeaponType.h found in:"
-          $hits | ForEach-Object { Write-Host "  $_" }
-          $dirs += $hits
-          $dirs = $dirs | Select-Object -Unique
+          $incs += $hits
+          $incs = $incs | Select-Object -Unique
+          $defs += @('GTASA', 'PLUGIN_SGV_10US', '_USE_MATH_DEFINES', '_CRT_SECURE_NO_WARNINGS', '_CRT_NON_CONFORMING_SWPRINTFS')
+          $defs = $defs | Select-Object -Unique
+
+          Write-Host "C++ standard : $std"
+          Write-Host "Extra options: $($extraOpts -join ' ')"
+          Write-Host "Defines      : $($defs -join ' ')"
+          Write-Host "Include dirs :"
+          $incs | ForEach-Object { Write-Host "   $_" }
+
+          $rsp = @()
+          $rsp += $defs | ForEach-Object { '/D' + $_ }
+          $rsp += $incs | ForEach-Object { '/I"' + $_ + '"' }
           $incFile = Join-Path (Get-Location) "build\includes.rsp"
-          $dirs | ForEach-Object { '/I"' + $_ + '"' } | Set-Content -Path $incFile -Encoding ascii
+          $rsp | Set-Content -Path $incFile -Encoding ascii
+
           Push-Location build
-          cl /nologo /LD /MT /O2 /EHsc /std:c++latest /D_CRT_SECURE_NO_WARNINGS /DNDEBUG `
-             /DGTASA /DPLUGIN_SGV_10US /D_USE_MATH_DEFINES /D_CRT_NON_CONFORMING_SWPRINTFS `
-             '@includes.rsp' `
-             $sources /Fe"GTA100Checklist.dll" /link /MACHINE:X86 "$env:PLUGIN_LIB"
-          if ($LASTEXITCODE -ne 0) { throw "Compile failed - see errors above" }
+          $out = cl /nologo /LD /MT /O2 /EHsc $std /DNDEBUG $extraOpts '@includes.rsp' `
+             $sources /Fe"GTA100Checklist.dll" /link /MACHINE:X86 "$env:PLUGIN_LIB" 2>&1
+          $code = $LASTEXITCODE
+          $out | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0) {
+            Write-Host ""
+            Write-Host "=========== FIRST ERRORS (copy these) ==========="
+            $out | Where-Object { $_ -match 'error' } | Select-Object -First 8 | ForEach-Object { Write-Host $_ }
+            Write-Host "=========== END ==========="
+            throw "Compile failed - see FIRST ERRORS block above"
+          }
           Copy-Item GTA100Checklist.dll GTA100Checklist.asi
           Pop-Location
 
