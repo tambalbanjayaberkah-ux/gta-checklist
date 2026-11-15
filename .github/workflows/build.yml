@@ -57,6 +57,18 @@ jobs:
           Write-Host "Library: $($lib.FullName)"
           "PLUGIN_LIB=$($lib.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: List real stat names in plugin-sdk (for fixing the code)
+        shell: pwsh
+        run: |
+          $sdk = $env:PLUGIN_SDK_DIR
+          $files = Get-ChildItem -Path "$sdk\plugin_sa" -Recurse -Include "eStats.h","CStats.h" -File -ErrorAction SilentlyContinue
+          foreach ($f in $files) {
+            Write-Host "=========== STATS IN $($f.Name) ==========="
+            Select-String -Path $f.FullName -Pattern 'PARAMEDIC|AMBULANCE|FIRE|VIGILANTE|TAXI|PIMP|EXPORT|SAFEHOUSE|PROGRESS|TAG|SNAPSHOT|HORSESHOE|OYSTER' |
+              ForEach-Object { Write-Host $_.Line.Trim() }
+            Write-Host "=========== END $($f.Name) ==========="
+          }
+
       - name: Compile the mod
         shell: pwsh
         run: |
