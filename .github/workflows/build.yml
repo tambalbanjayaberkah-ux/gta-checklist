@@ -22,21 +22,55 @@ jobs:
           $sdk = Join-Path $env:RUNNER_TEMP "plugin-sdk"
           git clone --depth 1 https://github.com/DK22Pac/plugin-sdk.git $sdk
           "PLUGIN_SDK_DIR=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          # plugin-sdk project files may reference the game folder; point it at a dummy folder
           $game = Join-Path $env:RUNNER_TEMP "gta_sa_dummy"
           New-Item -ItemType Directory -Force -Path (Join-Path $game "scripts") | Out-Null
           "GTA_SA_DIR=$game" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Look inside plugin-sdk (for debugging)
+        shell: pwsh
+        run: |
+          $sdk = $env:PLUGIN_SDK_DIR
+          Write-Host "=== Top-level of plugin-sdk ==="
+          Get-ChildItem $sdk | ForEach-Object { Write-Host $_.Name }
+          Write-Host "=== Build-related files ==="
+          Get-ChildItem $sdk -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '\.(sln|vcxproj)$' -or $_.Name -match '^premake5.*\.lua$' -or $_.Name -match '^premake5\.exe$' -or $_.Name -eq 'CMakeLists.txt' -or $_.Extension -in '.bat','.cmd' } |
+            ForEach-Object { Write-Host $_.FullName.Substring($sdk.Length) }
 
       - name: Build plugin-sdk library for GTA SA
         shell: pwsh
         run: |
           $sdk = $env:PLUGIN_SDK_DIR
-          $proj = Get-ChildItem -Path $sdk -Recurse -Filter "plugin_sa.vcxproj" | Select-Object -First 1
-          if (-not $proj) { throw "plugin_sa.vcxproj not found in plugin-sdk" }
+          function Find-Proj { Get-ChildItem -Path $sdk -Recurse -Filter "plugin_sa.vcxproj" -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          $proj = Find-Proj
+
+          if (-not $proj) {
+            Write-Host "No plugin_sa.vcxproj yet - trying to generate it with premake5"
+            $lua = Get-ChildItem -Path $sdk -Recurse -Filter "premake5.lua" -ErrorAction SilentlyContinue | Select-Object -First 1
+            $pm  = Get-ChildItem -Path $sdk -Recurse -Filter "premake5.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($lua) {
+              if (-not $pm) {
+                Write-Host "premake5.exe not in repo, downloading it"
+                $zip = Join-Path $env:RUNNER_TEMP "premake.zip"
+                $dir = Join-Path $env:RUNNER_TEMP "premake"
+                Invoke-WebRequest -Uri "https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-windows.zip" -OutFile $zip
+                Expand-Archive -Path $zip -DestinationPath $dir -Force
+                $pm = Get-ChildItem -Path $dir -Recurse -Filter "premake5.exe" | Select-Object -First 1
+              }
+              Push-Location $lua.DirectoryName
+              & $pm.FullName vs2022
+              Pop-Location
+              $proj = Find-Proj
+            }
+          }
+
+          if (-not $proj) { throw "plugin_sa.vcxproj not found in plugin-sdk (send me the 'Look inside plugin-sdk' step output)" }
+
           Write-Host "Building $($proj.FullName)"
           msbuild $proj.FullName /m /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /v:minimal
           if ($LASTEXITCODE -ne 0) { throw "plugin-sdk build failed" }
-          $lib = Get-ChildItem -Path $sdk -Recurse -Filter "plugin_sa.lib" | Select-Object -First 1
+
+          $lib = Get-ChildItem -Path $sdk -Recurse -Filter "plugin_sa.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $lib) { throw "plugin_sa.lib was not produced" }
           Write-Host "Library: $($lib.FullName)"
           "PLUGIN_LIB=$($lib.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
